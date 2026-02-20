@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 const app = express();
 
 app.use(express.json());
@@ -8,10 +10,33 @@ app.use(express.json());
 const IG_USER_ID = process.env.INSTAGRAM_USER_ID;
 const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 
-// Route kiểm tra server
+// Hàm bổ trợ để đọc file và hiển thị dưới dạng văn bản thuần (hoặc HTML đơn giản)
+const renderFileContent = (fileName, res) => {
+    const filePath = path.join(__dirname, fileName);
+    if (fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath, 'utf8');
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        return res.send(content);
+    }
+    res.status(404).send(`File ${fileName} not found.`);
+};
+
+// --- ROUTES HIỂN THỊ NỘI DUNG VĂN BẢN ---
+
 app.get('/', (req, res) => res.send('AutoUploader Studio Web Service is Running!'));
 
-// Route chính để nhận lệnh upload từ Activepieces/Worker
+// Route hiển thị Privacy Policy
+app.get('/privacy', (req, res) => renderFileContent('PRIVACY_POLICY.md', res));
+
+// Route hiển thị Terms of Service
+app.get('/terms', (req, res) => renderFileContent('TERMS_OF_SERVICE.md', res));
+
+// Route hiển thị App Review Description
+app.get('/review-desc', (req, res) => renderFileContent('APP_REVIEW_DESCRIPTION.md', res));
+
+
+// --- LOGIC UPLOAD VIDEO ---
+
 app.post('/upload-reel', async (req, res) => {
     const { video_url, caption } = req.body;
 
@@ -23,7 +48,6 @@ app.post('/upload-reel', async (req, res) => {
         console.log(`Starting upload for: ${video_url}`);
 
         // Bước 1: Khởi tạo Media Container cho Reels
-        // Sử dụng endpoint từ tài liệu Meta: /{ig-user-id}/media
         const initRes = await axios.post(`https://graph.facebook.com/v19.0/${IG_USER_ID}/media`, {
             media_type: 'REELS',
             video_url: video_url,
@@ -34,9 +58,7 @@ app.post('/upload-reel', async (req, res) => {
         const creationId = initRes.data.id;
         console.log(`Container created with ID: ${creationId}`);
 
-        // Bước 2: Đăng chính thức (Publish)
-        // Lưu ý: Meta cần thời gian xử lý video, logic đơn giản này gọi publish ngay
-        // Nếu video nặng, bạn nên tách bước này ra hoặc thêm delay/polling
+        // Bước 2: Đăng chính thức (Publish) sau khi Meta xử lý
         setTimeout(async () => {
             try {
                 const publishRes = await axios.post(`https://graph.facebook.com/v19.0/${IG_USER_ID}/media_publish`, {
@@ -47,7 +69,7 @@ app.post('/upload-reel', async (req, res) => {
             } catch (pError) {
                 console.error('Publish Error:', pError.response?.data || pError.message);
             }
-        }, 30000); // Tạm dừng 30 giây để Meta xử lý video
+        }, 30000); // 30s delay để Meta encode video
 
         res.status(200).json({
             success: true,
