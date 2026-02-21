@@ -30,36 +30,47 @@ passport.use(new FacebookStrategy({
     profileFields: ['id', 'displayName']
   },
   (accessToken, refreshToken, profile, done) => {
-    // Token này được log ra console của Render để bạn có thể lấy dùng lâu dài
-    console.log("New Access Token generated from Login:", accessToken);
+    console.log("New Access Token from Login:", accessToken);
     profile.token = accessToken;
     return done(null, profile);
   }
 ));
 
-// --- 3. Hàm bổ trợ hiển thị nội dung file Markdown ---
+// --- 3. Hàm bổ trợ hiển thị nội dung Markdown ---
 const renderHTMLContent = (fileName, title, res) => {
     const filePath = path.join(__dirname, fileName);
     if (fs.existsSync(filePath)) {
         const content = fs.readFileSync(filePath, 'utf8');
         return res.send(`
             <html>
-                <head><title>${title}</title><style>body{font-family:sans-serif;line-height:1.6;padding:40px;max-width:800px;margin:auto;background:#f9f9f9;}</style></head>
-                <body><div style="background:white;padding:30px;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,0.1)">${content.replace(/\n/g, '<br>')}</div></body>
+                <head>
+                    <title>${title}</title>
+                    <style>
+                        body{font-family:sans-serif;line-height:1.6;padding:40px;max-width:800px;margin:auto;background:#f4f7f6;}
+                        .container{background:white;padding:30px;border-radius:10px;box-shadow:0 4px 6px rgba(0,0,0,0.1);}
+                        h1{color:#2c3e50;}
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <h1>${title}</h1>
+                        <hr>
+                        ${content.replace(/\n/g, '<br>')}
+                    </div>
+                </body>
             </html>
         `);
     }
     res.status(404).send(`File ${fileName} không tồn tại trên server.`);
 };
 
-// --- 4. ROUTES PHÁP LÝ & REVIEW (Bắt buộc cho Meta App Review) ---
+// --- 4. ROUTES PHÁP LÝ & REVIEW (Bắt buộc cho Meta Review) ---
 app.get('/', (req, res) => res.send('AutoUploader Studio Web Service is Running!'));
-
 app.get('/privacy', (req, res) => renderHTMLContent('PRIVACY_POLICY.md', 'Privacy Policy', res));
 app.get('/terms', (req, res) => renderHTMLContent('TERMS_OF_SERVICE.md', 'Terms of Service', res));
 app.get('/review-desc', (req, res) => renderHTMLContent('APP_REVIEW_DESCRIPTION.md', 'App Review Info', res));
 
-// --- 5. ROUTES XÁC THỰC FACEBOOK (Dành cho Meta Login) ---
+// --- 5. ROUTES XÁC THỰC FACEBOOK ---
 app.get('/auth/facebook', passport.authenticate('facebook', { 
     scope: ['pages_show_list', 'instagram_basic', 'instagram_content_publish', 'pages_read_engagement'] 
 }));
@@ -67,63 +78,69 @@ app.get('/auth/facebook', passport.authenticate('facebook', {
 app.get('/auth/facebook/callback',
     passport.authenticate('facebook', { failureRedirect: '/' }),
     (req, res) => {
-        res.send('<h2>Xác thực thành công!</h2><p>Mã token mới đã được ghi nhận trong hệ thống console.</p>');
+        res.send('<h2>Xác thực thành công!</h2><p>Ứng dụng đã được cấp quyền. Bạn có thể kiểm tra Log trên Render để lấy Token.</p>');
     }
 );
 
-// Biến cấu hình lấy từ Render Environment
-const IG_USER_ID = process.env.INSTAGRAM_USER_ID;
-const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
-
-// --- 6. ROUTE TEST: ĐĂNG ẢNH LÊN INSTAGRAM (DÙNG ĐỂ KIỂM TRA KẾT NỐI) ---
-// Truy cập: https://auto-uploader-studio.onrender.com/test-publish
+// --- 6. ROUTE TEST: ĐĂNG ẢNH LÊN INSTAGRAM (CÓ CƠ CHẾ ĐỢI XỬ LÝ) ---
+// Đường dẫn: https://auto-uploader-studio.onrender.com/test-publish
 app.get('/test-publish', async (req, res) => {
+    const IG_USER_ID = process.env.INSTAGRAM_USER_ID;
+    const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
+
     if (!IG_USER_ID || !ACCESS_TOKEN) {
-        return res.status(500).json({ error: "Thiếu cấu hình INSTAGRAM_USER_ID hoặc ACCESS_TOKEN trên Render." });
+        return res.status(500).json({ error: "Chưa cấu hình INSTAGRAM_USER_ID hoặc ACCESS_TOKEN trên Render!" });
     }
 
     try {
-        console.log(`--- Test Publish started for ID: ${IG_USER_ID} ---`);
+        console.log(`[TEST] Đang khởi tạo Container cho ID: ${IG_USER_ID}`);
 
-        // Bước 1: Tạo container cho ảnh mẫu
+        // Bước 1: Gửi yêu cầu tạo Container
         const containerRes = await axios.post(`https://graph.facebook.com/v21.0/${IG_USER_ID}/media`, {
             image_url: 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=1000',
-            caption: 'Auto-test from Gridbon AutoUploader Studio! 🚀',
+            caption: 'Test post từ AutoUploader Studio (Auto-delay mode) 🚀',
             access_token: ACCESS_TOKEN
         });
 
         const creationId = containerRes.data.id;
+        console.log(`[TEST] Container created: ${creationId}. Waiting 15s for processing...`);
 
-        // Bước 2: Publish ngay lập tức
-        const publishRes = await axios.post(`https://graph.facebook.com/v21.0/${IG_USER_ID}/media_publish`, {
-            creation_id: creationId,
-            access_token: ACCESS_TOKEN
-        });
+        // Bước 2: Đặt lịch Publish sau 15 giây để Meta kịp xử lý ảnh
+        setTimeout(async () => {
+            try {
+                const publishRes = await axios.post(`https://graph.facebook.com/v21.0/${IG_USER_ID}/media_publish`, {
+                    creation_id: creationId,
+                    access_token: ACCESS_TOKEN
+                });
+                console.log(`[TEST] 🎉 Đã đăng bài thành công! Media ID: ${publishRes.data.id}`);
+            } catch (pError) {
+                console.error('[TEST] Lỗi khi Publish:', pError.response?.data || pError.message);
+            }
+        }, 15000); // Đợi 15 giây
 
         res.json({
             success: true,
-            message: "Bài viết test đã đăng thành công lên Instagram!",
-            media_id: publishRes.data.id
+            message: "Yêu cầu đăng bài đã được gửi. Ảnh sẽ xuất hiện trên Instagram sau khoảng 15-20 giây.",
+            container_id: creationId
         });
 
     } catch (error) {
-        console.error('Test Route Error:', error.response?.data || error.message);
+        console.error('[TEST] Lỗi khởi tạo:', error.response?.data || error.message);
         res.status(500).json({ success: false, error: error.response?.data || error.message });
     }
 });
 
-// --- 7. LOGIC UPLOAD REELS (Dành cho API Request) ---
+// --- 7. LOGIC UPLOAD REELS (DÀNH CHO PRODUCTION) ---
 app.post('/upload-reel', async (req, res) => {
+    const IG_USER_ID = process.env.INSTAGRAM_USER_ID;
+    const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
     const { video_url, caption } = req.body;
 
-    if (!video_url) {
-        return res.status(400).json({ error: "Missing video_url" });
-    }
+    if (!video_url) return res.status(400).json({ error: "Missing video_url" });
 
     try {
-        console.log(`Processing Reel: ${video_url}`);
+        console.log(`[REELS] Đang khởi tạo cho video: ${video_url}`);
 
-        // Bước 1: Khởi tạo Reels Container
         const initRes = await axios.post(`https://graph.facebook.com/v21.0/${IG_USER_ID}/media`, {
             media_type: 'REELS',
             video_url: video_url,
@@ -132,24 +149,25 @@ app.post('/upload-reel', async (req, res) => {
         });
 
         const creationId = initRes.data.id;
+        console.log(`[REELS] Container ID: ${creationId}. Waiting 45s for video encoding...`);
         
-        // Bước 2: Đợi 30 giây để video được xử lý rồi mới Publish
+        // Reels nặng hơn nên cần đợi ít nhất 45 giây
         setTimeout(async () => {
             try {
-                await axios.post(`https://graph.facebook.com/v21.0/${IG_USER_ID}/media_publish`, {
+                const publishRes = await axios.post(`https://graph.facebook.com/v21.0/${IG_USER_ID}/media_publish`, {
                     creation_id: creationId,
                     access_token: ACCESS_TOKEN
                 });
-                console.log(`Published Reel successfully: ${creationId}`);
+                console.log(`[REELS] Successfully published: ${creationId}`);
             } catch (pError) {
-                console.error('Publish Error Detail:', pError.response?.data || pError.message);
+                console.error('[REELS] Publish Error:', pError.response?.data || pError.message);
             }
-        }, 30000);
+        }, 45000);
 
         res.status(200).json({ success: true, creation_id: creationId });
 
     } catch (error) {
-        console.error('API Error:', error.response?.data || error.message);
+        console.error('[REELS] API Error:', error.response?.data || error.message);
         res.status(500).json({ success: false, error: error.response?.data || "Internal Server Error" });
     }
 });
